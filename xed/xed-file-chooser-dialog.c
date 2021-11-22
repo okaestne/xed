@@ -44,8 +44,19 @@
 #define ALL_FILES _("All Files")
 #define ALL_TEXT_FILES _("All Text Files")
 
-struct _XedFileChooserDialogPrivate
+static void
+xed_file_chooser_dialog_setup (XedFileChooserDialog    *dialog,
+                               const gchar             *title,
+                               GtkWindow               *parent,
+                               GtkFileChooserAction     action,
+                               const GtkSourceEncoding *encoding,
+                               const gchar             *first_button_text,
+                               ...);
+
+typedef struct _XedFileChooserDialogPrivate
 {
+    GtkFileChooserNative *gtk_chooser_native;
+
     GSettings *filter_settings;
 
     GtkWidget *option_menu;
@@ -54,16 +65,23 @@ struct _XedFileChooserDialogPrivate
     GtkWidget *newline_label;
     GtkWidget *newline_combo;
     GtkListStore *newline_store;
-};
+} XedFileChooserDialogPrivate;
 
-G_DEFINE_TYPE_WITH_PRIVATE (XedFileChooserDialog, xed_file_chooser_dialog, GTK_TYPE_FILE_CHOOSER_DIALOG)
+G_DEFINE_TYPE_WITH_PRIVATE (XedFileChooserDialog, xed_file_chooser_dialog, G_TYPE_OBJECT)
 
 static void
 xed_file_chooser_dialog_dispose (GObject *object)
 {
     XedFileChooserDialog *dialog = XED_FILE_CHOOSER_DIALOG (object);
+    XedFileChooserDialogPrivate *priv = xed_file_chooser_dialog_get_instance_private (dialog);
 
-    g_clear_object (&dialog->priv->filter_settings);
+    if (priv->gtk_chooser_native != NULL) {
+        g_object_unref (priv->gtk_chooser_native);
+    }
+
+    priv->gtk_chooser_native = NULL;
+
+    g_clear_object (&priv->filter_settings);
 
     G_OBJECT_CLASS (xed_file_chooser_dialog_parent_class)->dispose (object);
 }
@@ -74,11 +92,13 @@ xed_file_chooser_dialog_class_init (XedFileChooserDialogClass *klass)
     GObjectClass *object_class = G_OBJECT_CLASS (klass);
 
     object_class->dispose = xed_file_chooser_dialog_dispose;
+    klass->setup = xed_file_chooser_dialog_setup;
 }
 
 static void
 create_option_menu (XedFileChooserDialog *dialog)
 {
+    XedFileChooserDialogPrivate *priv = xed_file_chooser_dialog_get_instance_private (dialog);
     GtkWidget *label;
     GtkWidget *menu;
 
@@ -86,31 +106,33 @@ create_option_menu (XedFileChooserDialog *dialog)
     gtk_widget_set_halign (label, GTK_ALIGN_START);
 
     menu = xed_encodings_combo_box_new (
-        gtk_file_chooser_get_action (GTK_FILE_CHOOSER (dialog)) == GTK_FILE_CHOOSER_ACTION_SAVE);
+        gtk_file_chooser_get_action (GTK_FILE_CHOOSER (priv->gtk_chooser_native)) == GTK_FILE_CHOOSER_ACTION_SAVE);
 
     gtk_label_set_mnemonic_widget (GTK_LABEL (label), menu);
 
-    gtk_box_pack_start (GTK_BOX (dialog->priv->extra_widget), label, FALSE, TRUE, 0);
-    gtk_box_pack_start (GTK_BOX (dialog->priv->extra_widget), menu, TRUE, TRUE, 0);
+    gtk_box_pack_start (GTK_BOX (priv->extra_widget), label, FALSE, TRUE, 0);
+    gtk_box_pack_start (GTK_BOX (priv->extra_widget), menu, TRUE, TRUE, 0);
 
     gtk_widget_show (label);
     gtk_widget_show (menu);
 
-    dialog->priv->option_menu = menu;
+    priv->option_menu = menu;
 }
 
 static void
 update_newline_visibility (XedFileChooserDialog *dialog)
 {
-    if (gtk_file_chooser_get_action (GTK_FILE_CHOOSER (dialog)) == GTK_FILE_CHOOSER_ACTION_SAVE)
+    XedFileChooserDialogPrivate *priv = xed_file_chooser_dialog_get_instance_private (dialog);
+
+    if (gtk_file_chooser_get_action (GTK_FILE_CHOOSER (priv->gtk_chooser_native)) == GTK_FILE_CHOOSER_ACTION_SAVE)
     {
-        gtk_widget_show (dialog->priv->newline_label);
-        gtk_widget_show (dialog->priv->newline_combo);
+        gtk_widget_show (priv->newline_label);
+        gtk_widget_show (priv->newline_combo);
     }
     else
     {
-        gtk_widget_hide (dialog->priv->newline_label);
-        gtk_widget_hide (dialog->priv->newline_combo);
+        gtk_widget_hide (priv->newline_label);
+        gtk_widget_hide (priv->newline_combo);
     }
 }
 
@@ -133,6 +155,7 @@ newline_combo_append (GtkComboBox          *combo,
 static void
 create_newline_combo (XedFileChooserDialog *dialog)
 {
+    XedFileChooserDialogPrivate *priv = xed_file_chooser_dialog_get_instance_private (dialog);
     GtkWidget *label, *combo;
     GtkListStore *store;
     GtkCellRenderer *renderer;
@@ -155,12 +178,12 @@ create_newline_combo (XedFileChooserDialog *dialog)
 
     gtk_label_set_mnemonic_widget (GTK_LABEL (label), combo);
 
-    gtk_box_pack_start (GTK_BOX (dialog->priv->extra_widget), label, FALSE, TRUE, 0);
-    gtk_box_pack_start (GTK_BOX (dialog->priv->extra_widget), combo, TRUE, TRUE, 0);
+    gtk_box_pack_start (GTK_BOX (priv->extra_widget), label, FALSE, TRUE, 0);
+    gtk_box_pack_start (GTK_BOX (priv->extra_widget), combo, TRUE, TRUE, 0);
 
-    dialog->priv->newline_combo = combo;
-    dialog->priv->newline_label = label;
-    dialog->priv->newline_store = store;
+    priv->newline_combo = combo;
+    priv->newline_label = label;
+    priv->newline_store = store;
 
     update_newline_visibility (dialog);
 }
@@ -168,14 +191,16 @@ create_newline_combo (XedFileChooserDialog *dialog)
 static void
 create_extra_widget (XedFileChooserDialog *dialog)
 {
-    dialog->priv->extra_widget = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
+    XedFileChooserDialogPrivate *priv = xed_file_chooser_dialog_get_instance_private (dialog);
 
-    gtk_widget_show (dialog->priv->extra_widget);
+    priv->extra_widget = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
+
+    gtk_widget_show (priv->extra_widget);
 
     create_option_menu (dialog);
     create_newline_combo (dialog);
 
-    gtk_file_chooser_set_extra_widget (GTK_FILE_CHOOSER (dialog), dialog->priv->extra_widget);
+    gtk_file_chooser_set_extra_widget (GTK_FILE_CHOOSER (priv->gtk_chooser_native), priv->extra_widget);
 
 }
 
@@ -184,22 +209,23 @@ action_changed (XedFileChooserDialog *dialog,
                 GParamSpec           *pspec,
                 gpointer              data)
 {
+    XedFileChooserDialogPrivate *priv = xed_file_chooser_dialog_get_instance_private (dialog);
     GtkFileChooserAction action;
 
-    action = gtk_file_chooser_get_action (GTK_FILE_CHOOSER (dialog));
+    action = gtk_file_chooser_get_action (GTK_FILE_CHOOSER (priv->gtk_chooser_native));
 
     switch (action)
     {
         case GTK_FILE_CHOOSER_ACTION_OPEN:
-            g_object_set (dialog->priv->option_menu, "save_mode", FALSE, NULL);
-            gtk_widget_show (dialog->priv->option_menu);
+            g_object_set (priv->option_menu, "save_mode", FALSE, NULL);
+            gtk_widget_show (priv->option_menu);
             break;
         case GTK_FILE_CHOOSER_ACTION_SAVE:
-            g_object_set (dialog->priv->option_menu, "save_mode", TRUE, NULL);
-            gtk_widget_show (dialog->priv->option_menu);
+            g_object_set (priv->option_menu, "save_mode", TRUE, NULL);
+            gtk_widget_show (priv->option_menu);
             break;
         default:
-            gtk_widget_hide (dialog->priv->option_menu);
+            gtk_widget_hide (priv->option_menu);
     }
 
     update_newline_visibility (dialog);
@@ -210,9 +236,10 @@ filter_changed (XedFileChooserDialog *dialog,
                 GParamSpec           *pspec,
                 gpointer              data)
 {
+    XedFileChooserDialogPrivate *priv = xed_file_chooser_dialog_get_instance_private (dialog);
     GtkFileFilter *filter;
 
-    filter = gtk_file_chooser_get_filter (GTK_FILE_CHOOSER (dialog));
+    filter = gtk_file_chooser_get_filter (GTK_FILE_CHOOSER (priv->gtk_chooser_native));
     if (filter != NULL)
     {
         const gchar *name;
@@ -228,7 +255,7 @@ filter_changed (XedFileChooserDialog *dialog,
 
         xed_debug_message (DEBUG_COMMANDS, "Active filter: %s (%d)", name, id);
 
-        g_settings_set_int (dialog->priv->filter_settings, XED_SETTINGS_ACTIVE_FILE_FILTER, id);
+        g_settings_set_int (priv->filter_settings, XED_SETTINGS_ACTIVE_FILE_FILTER, id);
     }
 }
 
@@ -320,46 +347,51 @@ all_text_files_filter (const GtkFileFilterInfo *filter_info,
 static void
 xed_file_chooser_dialog_init (XedFileChooserDialog *dialog)
 {
-    dialog->priv = xed_file_chooser_dialog_get_instance_private (dialog);
+    XedFileChooserDialogPrivate *priv = xed_file_chooser_dialog_get_instance_private (dialog);
+    priv = xed_file_chooser_dialog_get_instance_private (dialog);
 
-    dialog->priv->filter_settings = g_settings_new ("org.x.editor.state.file-filter");
+    priv->filter_settings = g_settings_new ("org.x.editor.state.file-filter");
 }
 
-static GtkWidget *
-xed_file_chooser_dialog_new_valist (const gchar             *title,
-                                    GtkWindow               *parent,
-                                    GtkFileChooserAction     action,
-                                    const GtkSourceEncoding *encoding,
-                                    const gchar             *first_button_text,
-                                    va_list                  varargs)
+static void
+xed_file_chooser_dialog_setup_valist (XedFileChooserDialog    *dialog,
+                                      const gchar             *title,
+                                      GtkWindow               *parent,
+                                      GtkFileChooserAction     action,
+                                      const GtkSourceEncoding *encoding,
+                                      const gchar             *first_button_text,
+                                      va_list                  varargs)
 {
-    GtkWidget *result;
+    XedFileChooserDialogPrivate *priv;
     const char *button_text = first_button_text;
     gint response_id;
     GtkFileFilter *filter;
     gint active_filter;
 
-    g_return_val_if_fail (parent != NULL, NULL);
+    g_return_if_fail (parent != NULL);
 
-    result = g_object_new (XED_TYPE_FILE_CHOOSER_DIALOG,
-                           "title", title,
-                           "local-only", FALSE,
-                           "action", action,
-                           "select-multiple", action == GTK_FILE_CHOOSER_ACTION_OPEN,
-                           NULL);
+    priv = xed_file_chooser_dialog_get_instance_private (dialog);
 
-    create_extra_widget (XED_FILE_CHOOSER_DIALOG (result));
+    priv->gtk_chooser_native = gtk_file_chooser_native_new (
+            title, parent, action, first_button_text, first_button_text);
+    //                       "title", title,
+    //                       "local-only", FALSE,
+    //                       "action", action,
+    //                       "select-multiple", action == GTK_FILE_CHOOSER_ACTION_OPEN,
+    //                       NULL);
 
-    g_signal_connect (result, "notify::action",
+    create_extra_widget (XED_FILE_CHOOSER_DIALOG (dialog));
+
+    g_signal_connect (priv->gtk_chooser_native, "notify::action",
                       G_CALLBACK (action_changed), NULL);
 
     if (encoding != NULL)
     {
         xed_encodings_combo_box_set_selected_encoding (
-                XED_ENCODINGS_COMBO_BOX (XED_FILE_CHOOSER_DIALOG (result)->priv->option_menu), encoding);
+                XED_ENCODINGS_COMBO_BOX (priv->option_menu), encoding);
     }
 
-    active_filter = g_settings_get_int (XED_FILE_CHOOSER_DIALOG (result)->priv->filter_settings,
+    active_filter = g_settings_get_int (priv->filter_settings,
                                         XED_SETTINGS_ACTIVE_FILE_FILTER);
     xed_debug_message (DEBUG_COMMANDS, "Active filter: %d", active_filter);
 
@@ -368,49 +400,47 @@ xed_file_chooser_dialog_new_valist (const gchar             *title,
 
     gtk_file_filter_set_name (filter, ALL_FILES);
     gtk_file_filter_add_pattern (filter, "*");
-    gtk_file_chooser_add_filter (GTK_FILE_CHOOSER (result), filter);
-    gtk_file_chooser_set_action (GTK_FILE_CHOOSER (result), action);
+    gtk_file_chooser_add_filter (GTK_FILE_CHOOSER (priv->gtk_chooser_native), filter);
+    //gtk_file_chooser_set_action (GTK_FILE_CHOOSER (priv->gtk_chooser_native), action);
 
     if (active_filter != 1)
     {
         /* Make this filter the default */
-        gtk_file_chooser_set_filter (GTK_FILE_CHOOSER (result), filter);
+        gtk_file_chooser_set_filter (GTK_FILE_CHOOSER (priv->gtk_chooser_native), filter);
     }
 
     filter = gtk_file_filter_new ();
     gtk_file_filter_set_name (filter, ALL_TEXT_FILES);
     gtk_file_filter_add_custom (filter, GTK_FILE_FILTER_MIME_TYPE, all_text_files_filter, NULL, NULL);
-    gtk_file_chooser_add_filter (GTK_FILE_CHOOSER (result), filter);
+    gtk_file_chooser_add_filter (GTK_FILE_CHOOSER (priv->gtk_chooser_native), filter);
 
     if (active_filter == 1)
     {
         /* Make this filter the default */
-        gtk_file_chooser_set_filter (GTK_FILE_CHOOSER (result), filter);
+        gtk_file_chooser_set_filter (GTK_FILE_CHOOSER (priv->gtk_chooser_native), filter);
     }
 
-    g_signal_connect (result, "notify::filter",
+    g_signal_connect (priv->gtk_chooser_native, "notify::filter",
                       G_CALLBACK (filter_changed), NULL);
 
-    gtk_window_set_transient_for (GTK_WINDOW (result), parent);
-    gtk_window_set_destroy_with_parent (GTK_WINDOW (result), TRUE);
-
+    gtk_native_dialog_set_transient_for (GTK_NATIVE_DIALOG (priv->gtk_chooser_native), parent);
+    //gtk_window_set_destroy_with_parent (GTK_WINDOW (priv->gtk_chooser_native), TRUE);
+/*
     while (button_text)
     {
         response_id = va_arg (varargs, gint);
 
-        gtk_dialog_add_button (GTK_DIALOG (result), button_text, response_id);
+        gtk_dialog_add_button (GTK_DIALOG (priv->gtk_chooser_native), button_text, response_id);
         if ((response_id == GTK_RESPONSE_OK) ||
             (response_id == GTK_RESPONSE_ACCEPT) ||
             (response_id == GTK_RESPONSE_YES) ||
             (response_id == GTK_RESPONSE_APPLY))
         {
-            gtk_dialog_set_default_response (GTK_DIALOG (result), response_id);
+            gtk_dialog_set_default_response (GTK_DIALOG (priv->gtk_chooser_native), response_id);
         }
 
         button_text = va_arg (varargs, const gchar *);
-    }
-
-    return result;
+    }*/
 }
 
 /**
@@ -429,43 +459,56 @@ xed_file_chooser_dialog_new_valist (const gchar             *title,
  * Return value: a new #XedFileChooserDialog
  *
  **/
-GtkWidget *
-xed_file_chooser_dialog_new (const gchar             *title,
-                             GtkWindow               *parent,
-                             GtkFileChooserAction     action,
-                             const GtkSourceEncoding *encoding,
-                             const gchar             *first_button_text,
-                             ...)
+static void
+xed_file_chooser_dialog_setup (XedFileChooserDialog    *dialog,
+                               const gchar             *title,
+                               GtkWindow               *parent,
+                               GtkFileChooserAction     action,
+                               const GtkSourceEncoding *encoding,
+                               const gchar             *first_button_text,
+                               ...)
 {
-    GtkWidget *result;
     va_list varargs;
 
-    va_start (varargs, first_button_text);
-    result = xed_file_chooser_dialog_new_valist (title, parent, action, encoding, first_button_text, varargs);
-    va_end (varargs);
+    //result = g_object_new (XED_TYPE_FILE_CHOOSER_DIALOG, NULL);
 
-    return result;
+    va_start (varargs, first_button_text);
+    xed_file_chooser_dialog_setup_valist (dialog, title, parent, action, encoding, first_button_text, varargs);
+    va_end (varargs);
+}
+
+void
+xed_file_chooser_dialog_show (XedFileChooserDialog *dialog) {
+    XedFileChooserDialogPrivate *priv = xed_file_chooser_dialog_get_instance_private (dialog);
+
+    g_return_if_fail (XED_IS_FILE_CHOOSER_DIALOG (dialog));
+
+    gtk_native_dialog_show (GTK_NATIVE_DIALOG (priv->gtk_chooser_native));
 }
 
 void
 xed_file_chooser_dialog_set_encoding (XedFileChooserDialog    *dialog,
                                       const GtkSourceEncoding *encoding)
 {
-    g_return_if_fail (XED_IS_FILE_CHOOSER_DIALOG (dialog));
-    g_return_if_fail (XED_IS_ENCODINGS_COMBO_BOX (dialog->priv->option_menu));
+    XedFileChooserDialogPrivate *priv = xed_file_chooser_dialog_get_instance_private (dialog);
 
-    xed_encodings_combo_box_set_selected_encoding (XED_ENCODINGS_COMBO_BOX (dialog->priv->option_menu), encoding);
+    g_return_if_fail (XED_IS_FILE_CHOOSER_DIALOG (priv->gtk_chooser_native));
+    g_return_if_fail (XED_IS_ENCODINGS_COMBO_BOX (priv->option_menu));
+
+    xed_encodings_combo_box_set_selected_encoding (XED_ENCODINGS_COMBO_BOX (priv->option_menu), encoding);
 }
 
 const GtkSourceEncoding *
 xed_file_chooser_dialog_get_encoding (XedFileChooserDialog *dialog)
 {
-    g_return_val_if_fail (XED_IS_FILE_CHOOSER_DIALOG (dialog), NULL);
-    g_return_val_if_fail (XED_IS_ENCODINGS_COMBO_BOX (dialog->priv->option_menu), NULL);
-    g_return_val_if_fail ((gtk_file_chooser_get_action (GTK_FILE_CHOOSER (dialog)) == GTK_FILE_CHOOSER_ACTION_OPEN ||
-                          gtk_file_chooser_get_action (GTK_FILE_CHOOSER (dialog)) == GTK_FILE_CHOOSER_ACTION_SAVE), NULL);
+    XedFileChooserDialogPrivate *priv = xed_file_chooser_dialog_get_instance_private (dialog);
 
-    return xed_encodings_combo_box_get_selected_encoding (XED_ENCODINGS_COMBO_BOX (dialog->priv->option_menu));
+    g_return_val_if_fail (XED_IS_FILE_CHOOSER_DIALOG (priv->gtk_chooser_native), NULL);
+    g_return_val_if_fail (XED_IS_ENCODINGS_COMBO_BOX (priv->option_menu), NULL);
+    g_return_val_if_fail ((gtk_file_chooser_get_action (GTK_FILE_CHOOSER (priv->gtk_chooser_native)) == GTK_FILE_CHOOSER_ACTION_OPEN ||
+                          gtk_file_chooser_get_action (GTK_FILE_CHOOSER (priv->gtk_chooser_native)) == GTK_FILE_CHOOSER_ACTION_SAVE), NULL);
+
+    return xed_encodings_combo_box_get_selected_encoding (XED_ENCODINGS_COMBO_BOX (priv->option_menu));
 }
 
 static void
@@ -500,25 +543,27 @@ void
 xed_file_chooser_dialog_set_newline_type (XedFileChooserDialog *dialog,
                                           GtkSourceNewlineType  newline_type)
 {
-    g_return_if_fail (XED_IS_FILE_CHOOSER_DIALOG (dialog));
-    g_return_if_fail (gtk_file_chooser_get_action (GTK_FILE_CHOOSER (dialog)) == GTK_FILE_CHOOSER_ACTION_SAVE);
+    XedFileChooserDialogPrivate *priv = xed_file_chooser_dialog_get_instance_private (dialog);
+    g_return_if_fail (XED_IS_FILE_CHOOSER_DIALOG (priv->gtk_chooser_native));
+    g_return_if_fail (gtk_file_chooser_get_action (GTK_FILE_CHOOSER (priv->gtk_chooser_native)) == GTK_FILE_CHOOSER_ACTION_SAVE);
 
-    set_enum_combo (GTK_COMBO_BOX (dialog->priv->newline_combo), newline_type);
+    set_enum_combo (GTK_COMBO_BOX (priv->newline_combo), newline_type);
 }
 
 GtkSourceNewlineType
 xed_file_chooser_dialog_get_newline_type (XedFileChooserDialog *dialog)
 {
+    XedFileChooserDialogPrivate *priv = xed_file_chooser_dialog_get_instance_private (dialog);
     GtkTreeIter iter;
     GtkSourceNewlineType newline_type;
 
-    g_return_val_if_fail (XED_IS_FILE_CHOOSER_DIALOG (dialog), GTK_SOURCE_NEWLINE_TYPE_DEFAULT);
-    g_return_val_if_fail (gtk_file_chooser_get_action (GTK_FILE_CHOOSER (dialog)) == GTK_FILE_CHOOSER_ACTION_SAVE,
+    g_return_val_if_fail (XED_IS_FILE_CHOOSER_DIALOG (priv->gtk_chooser_native), GTK_SOURCE_NEWLINE_TYPE_DEFAULT);
+    g_return_val_if_fail (gtk_file_chooser_get_action (GTK_FILE_CHOOSER (priv->gtk_chooser_native)) == GTK_FILE_CHOOSER_ACTION_SAVE,
                           GTK_SOURCE_NEWLINE_TYPE_DEFAULT);
 
-    gtk_combo_box_get_active_iter (GTK_COMBO_BOX (dialog->priv->newline_combo), &iter);
+    gtk_combo_box_get_active_iter (GTK_COMBO_BOX (priv->newline_combo), &iter);
 
-    gtk_tree_model_get (GTK_TREE_MODEL (dialog->priv->newline_store), &iter, 1, &newline_type, -1);
+    gtk_tree_model_get (GTK_TREE_MODEL (priv->newline_store), &iter, 1, &newline_type, -1);
 
     return newline_type;
 }

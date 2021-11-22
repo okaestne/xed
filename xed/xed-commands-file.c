@@ -43,7 +43,8 @@
 #include "xed-window-private.h"
 #include "xed-statusbar.h"
 #include "xed-utils.h"
-#include "xed-file-chooser-dialog.h"
+#include "xed-file-chooser-open-dialog.h"
+#include "xed-file-chooser-save-dialog.h"
 #include "xed-close-confirmation-dialog.h"
 
 /* Defined constants */
@@ -373,7 +374,7 @@ void
 _xed_cmd_file_open (GtkAction *action,
                     XedWindow *window)
 {
-    GtkWidget *open_dialog;
+    XedFileChooserOpenDialog *open_dialog;
     gpointer data;
     XedDocument *doc;
     GFile *default_path = NULL;
@@ -392,13 +393,7 @@ _xed_cmd_file_open (GtkAction *action,
     }
 
     /* Translators: "Open Files" is the title of the file chooser window */
-    open_dialog = xed_file_chooser_dialog_new (_("Open Files"),
-                                               GTK_WINDOW (window),
-                                               GTK_FILE_CHOOSER_ACTION_OPEN,
-                                               NULL,
-                                               _("_Cancel"), GTK_RESPONSE_CANCEL,
-                                               _("_Open"), GTK_RESPONSE_OK,
-                                               NULL);
+    open_dialog = xed_file_chooser_open_dialog_new (GTK_WINDOW (window));
 
     g_object_set_data (G_OBJECT (window), XED_OPEN_DIALOG_KEY, open_dialog);
 
@@ -433,9 +428,10 @@ _xed_cmd_file_open (GtkAction *action,
         g_object_unref (default_path);
     }
 
-    g_signal_connect (open_dialog, "response", G_CALLBACK (open_dialog_response_cb), window);
+    // TODO
+    //g_signal_connect (open_dialog, "response", G_CALLBACK (open_dialog_response_cb), window);
 
-    gtk_widget_show (open_dialog);
+    xed_file_chooser_dialog_show (XED_FILE_CHOOSER_DIALOG (open_dialog));
 }
 
 static gboolean
@@ -625,7 +621,7 @@ save_as_tab_async (XedTab              *tab,
                    gpointer             user_data)
 {
     GTask *task;
-    GtkWidget *save_dialog;
+    XedFileChooserDialog *save_dialog;
     GtkWindowGroup *wg;
     XedDocument *doc;
     GtkSourceFile *file;
@@ -641,13 +637,7 @@ save_as_tab_async (XedTab              *tab,
     task = g_task_new (tab, cancellable, callback, user_data);
     g_task_set_task_data (task, g_object_ref (window), g_object_unref);
 
-    save_dialog = xed_file_chooser_dialog_new (_("Save As\342\200\246"),
-                                               GTK_WINDOW (window),
-                                               GTK_FILE_CHOOSER_ACTION_SAVE,
-                                               NULL,
-                                               _("_Cancel"), GTK_RESPONSE_CANCEL,
-                                               _("_Save"), GTK_RESPONSE_OK,
-                                               NULL);
+    save_dialog = XED_FILE_CHOOSER_DIALOG (xed_file_chooser_save_dialog_new (GTK_WINDOW (window)));
 
     gtk_file_chooser_set_do_overwrite_confirmation (GTK_FILE_CHOOSER (save_dialog), TRUE);
     g_signal_connect (save_dialog, "confirm-overwrite", G_CALLBACK (confirm_overwrite_callback), NULL);
@@ -704,13 +694,13 @@ save_as_tab_async (XedTab              *tab,
 
     newline_type = gtk_source_file_get_newline_type (file);
 
-    xed_file_chooser_dialog_set_encoding (XED_FILE_CHOOSER_DIALOG (save_dialog), encoding);
+    xed_file_chooser_dialog_set_encoding (save_dialog, encoding);
 
-    xed_file_chooser_dialog_set_newline_type (XED_FILE_CHOOSER_DIALOG (save_dialog), newline_type);
+    xed_file_chooser_dialog_set_newline_type (save_dialog, newline_type);
 
     g_signal_connect (save_dialog, "response", G_CALLBACK (save_dialog_response_cb), task);
 
-    gtk_widget_show (save_dialog);
+    xed_file_chooser_dialog_show (save_dialog);
 }
 
 static gboolean
